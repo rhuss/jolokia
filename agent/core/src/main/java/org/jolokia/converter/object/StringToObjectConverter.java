@@ -10,6 +10,8 @@ import java.net.URL;
 import java.util.*;
 
 import javax.management.ObjectName;
+import javax.management.Attribute;
+import javax.management.AttributeList;
 
 import org.jolokia.util.*;
 import org.json.simple.JSONArray;
@@ -60,7 +62,7 @@ public class StringToObjectConverter {
         PARSER_MAP.put("float",new FloatParser());
         PARSER_MAP.put(BigDecimal.class.getName(),new BigDecimalParser());
         PARSER_MAP.put(BigInteger.class.getName(),new BigIntegerParser());
-        
+
 
         PARSER_MAP.put(Boolean.class.getName(),new BooleanParser());
         PARSER_MAP.put("boolean",new BooleanParser());
@@ -70,6 +72,7 @@ public class StringToObjectConverter {
         PARSER_MAP.put(Date.class.getName(),new DateParser());
         PARSER_MAP.put(ObjectName.class.getName(), new ObjectNameParser());
         PARSER_MAP.put(URL.class.getName(),new URLParser());
+        PARSER_MAP.put(AttributeList.class.getName(), new AttributeListParser());
 
         JSONParser jsonExtractor = new JSONParser();
         for (Class type : new Class[] { Map.class, List.class,
@@ -85,6 +88,7 @@ public class StringToObjectConverter {
         TYPE_SIGNATURE_MAP.put("J",long.class);
         TYPE_SIGNATURE_MAP.put("F",float.class);
         TYPE_SIGNATURE_MAP.put("D",double.class);
+
     }
 
     /**
@@ -163,9 +167,9 @@ public class StringToObjectConverter {
 
     // ======================================================================================================
 
-    // Check whether an argument can be used directly 
+    // Check whether an argument can be used directly
     // or the argument could be used in a public constructor
-    // or whether it needs some sort of conversion, 
+    // or whether it needs some sort of conversion,
     // Returns null if a string conversion should happen
     private Object prepareForDirectUsage(Class expectedClass, Object pArgument) {
         Class givenClass = pArgument.getClass();
@@ -175,7 +179,7 @@ public class StringToObjectConverter {
         	return expectedClass.isAssignableFrom(givenClass) ? pArgument : null;
         }
     }
-    
+
     private Object convertByConstructor(String pType, String pValue) {
         Class<?> expectedClass = ClassUtil.classForName(pType);
         if (expectedClass != null) {
@@ -189,7 +193,7 @@ public class StringToObjectConverter {
                 }
             }
         }
-        
+
         return null;
     }
 
@@ -214,12 +218,12 @@ public class StringToObjectConverter {
         if (parser != null) {
             return parser.extract(value);
         }
-        
+
         Object cValue = convertByConstructor(pType, pValue);
         if (cValue != null) {
         	return cValue;
         }
-        
+
         throw new IllegalArgumentException(
                 "Cannot convert string " + value + " to type " +
                         pType + " because no converter could be found");
@@ -381,6 +385,124 @@ public class StringToObjectConverter {
                 return new URL(pValue);
             } catch (MalformedURLException e) {
                 throw new IllegalArgumentException("Cannot parse URL " + pValue + ": " + e, e);
+            }
+        }
+    }
+
+    private static class AttributeListParser implements Parser {
+
+        public Object convertByValueOf(String targetClassName, Object tempValue) {
+            Class expectedClass = ClassUtil.classForName(targetClassName);
+            if (expectedClass != null) {
+                Class[] params = new Class[] {String.class};
+                Object[] paramsObj = new Object[] {tempValue.toString()};
+                try {
+                    java.lang.reflect.Method valueOfMethod = expectedClass.getDeclaredMethod("valueOf", params);
+                    if (valueOfMethod == null)
+                        throw new IllegalArgumentException("Cannot convert to target class by valueOf: " + targetClassName);
+                    else
+                        return valueOfMethod.invoke(expectedClass, paramsObj);
+                } catch (Exception e) {
+                    throw new IllegalArgumentException("Cannot convert to target class: " + targetClassName);
+                }
+            } else
+                throw new IllegalArgumentException("Cannot find the target class: " + targetClassName);
+        }
+
+        /** {@inheritDoc} */
+        public AttributeList parseJSONObject(JSONObject value) {
+            try {
+                Map valueMap = (Map) value;
+                Iterator iter = valueMap.entrySet().iterator();
+                AttributeList atrList = new AttributeList();
+                while (iter.hasNext())
+                    { Map.Entry entry = (Map.Entry)iter.next();
+                        atrList.add(parseJSONEntry(entry));
+                    }
+                return atrList;
+            } catch(Exception e) {
+                throw new IllegalArgumentException("Cannot parse JSONObject "+ value +": " +e, e);
+            }
+        }
+
+        /** {@inheritDoc} */
+        public AttributeList parseJSONObject(JSONObject value, JSONObject spec) {
+            try {
+                Map valueMap = (Map) value;
+                Map specMap = (Map) spec;
+                Iterator iter = value.entrySet().iterator();
+                AttributeList atrList = new AttributeList();
+                while (iter.hasNext())
+                    { Map.Entry valueEntry = (Map.Entry)iter.next();
+                        String keyName = valueEntry.getKey().toString();
+
+                        if (specMap.get(keyName) == null)
+                            atrList.add(parseJSONEntry(valueEntry));
+                        else
+                            atrList.add(parseJSONEntry(valueEntry, new AbstractMap.SimpleEntry(keyName, specMap.get(keyName))));
+                    }
+                return atrList;
+            } catch(Exception e) {
+                throw new IllegalArgumentException("Cannot parse JSONObject "+ value +": " +e, e);
+            }
+        }
+
+        /** {@inheritDoc} */
+        public Attribute parseJSONEntry(Map.Entry entry) {
+            try {
+                Object entryV = entry.getValue();
+
+                if (entryV instanceof JSONObject) {
+                    entryV = parseJSONObject((JSONObject) entryV);
+                }
+
+                Attribute attr = new Attribute(entry.getKey().toString(),entryV);
+                return attr;
+            } catch(Exception e) {
+                throw new IllegalArgumentException("Cannot parse JSON entry "+ entry +": " +e, e);
+            }
+        }
+
+        /** {@inheritDoc} */
+        public Attribute parseJSONEntry(Map.Entry valueEntry, Map.Entry specEntry) {
+            try {
+                Object tempValue = valueEntry.getValue();
+                Object value;
+                if (tempValue instanceof JSONObject) {
+                    value = parseJSONObject((JSONObject) tempValue, (JSONObject)specEntry.getValue());
+                }
+                else if (tempValue instanceof JSONArray) {
+                    value = Array.newInstance(ClassUtil.classForName(specEntry.getValue().toString()), ((JSONArray)tempValue).size());
+                    int i = 0;
+                    for (Object o: (JSONArray)tempValue) {
+                        Array.set(value, i++, convertByValueOf(specEntry.getValue().toString(), o));
+                    }
+                } else {
+                    value = convertByValueOf(specEntry.getValue().toString(), tempValue);
+                }
+
+                Attribute attr = new Attribute(valueEntry.getKey().toString(),value);
+                return attr;
+            } catch(Exception e) {
+                throw new IllegalArgumentException("Cannot parse JSON entry "+ valueEntry +": " +e, e);
+            }
+        }
+
+        /** {@inheritDoc} */
+        public Object extract(String pValue) {
+            try {
+                JSONObject json = (JSONObject) new org.json.simple.parser.JSONParser().parse(pValue);
+                Object value = json.get("_value_");
+                Object spec = json.get("_spec_");
+                if (value instanceof JSONObject)
+                    if (spec == null)
+                        return parseJSONObject((JSONObject)value);
+                    else
+                        return parseJSONObject((JSONObject)value, (JSONObject)spec);
+                else
+                    throw new IllegalArgumentException("The value must be a JSONObject: " + pValue);
+            } catch(Exception e) {
+                throw new IllegalArgumentException("Cannot parse AttributeList "+ pValue +": " +e, e);
             }
         }
     }

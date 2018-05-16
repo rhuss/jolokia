@@ -41,6 +41,7 @@
     <module>osgi</module>
     <module>osgi-bundle</module>
     <module>jmx</module>
+    <module>wasear</module>
     <module>jvm</module>
     <module>jvm-spring</module>
   </modules>
