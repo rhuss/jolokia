@@ -35,16 +35,20 @@ public class OpenTypeDeserializer {
     // List of converters used
     private List<OpenTypeConverter<? extends OpenType>> converters;
 
+    // Used
+    private boolean forgiving = false;
+
     /**
      * Constructor
      *
      * @param pStringToObjectConverter converter for the 'leaf' values.
+     * @param pFuzzy whether deserialization errors should be ignored when more keys are registered than used in types. Oracle VM sometimes suffer from this issue.
      */
-    public OpenTypeDeserializer(StringToObjectConverter pStringToObjectConverter) {
+    public OpenTypeDeserializer(StringToObjectConverter pStringToObjectConverter, boolean pFuzzy ) {
         converters = Arrays.asList(
                 new SimpleTypeConverter(this,pStringToObjectConverter),
                 new ArrayTypeConverter(this),
-                new CompositeTypeConverter(this),
+                new CompositeTypeConverter(this, pFuzzy ),
                 new TabularDataConverter(this));
     }
 
@@ -70,4 +74,17 @@ public class OpenTypeDeserializer {
                     "Cannot convert " + pValue + " to " + pOpenType + ": " + "No converter could be found");
         }
 	}
+
+     /**
+     *
+     * @return whether I accept (and ignore) values that are not in the target type
+     */
+    protected boolean isForgiving() {
+        return this.forgiving;
+    }
+
+    public OpenTypeDeserializer makeForgiving() {
+        this.forgiving = true;
+        return this;
+    }
 }

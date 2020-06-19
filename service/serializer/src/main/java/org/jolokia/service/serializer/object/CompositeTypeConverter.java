@@ -32,12 +32,17 @@ import org.json.simple.JSONObject;
  */
 class CompositeTypeConverter extends OpenTypeConverter<CompositeType> {
 
+    // Whether certain errors can be tolerated
+    boolean fuzzy;
+
     /**
      * Constructor
      * @param pDispatcher parent dispatcher for converting recursively
+     * @param pFuzzy whether deserialization errors should be ignored when more keys are registered than used in types. Oracle VM sometimes suffer from this issue.
      */
-    CompositeTypeConverter(OpenTypeDeserializer pDispatcher) {
+    CompositeTypeConverter(OpenTypeDeserializer pDispatcher, boolean pFuzzy) {
         super(pDispatcher);
+        this.fuzzy = pFuzzy;
     }
 
     /** {@inheritDoc} */
@@ -78,14 +83,24 @@ class CompositeTypeConverter extends OpenTypeConverter<CompositeType> {
             Object value = entry.getValue();
 
             if (!pType.containsKey(key)) {
-                throw new IllegalArgumentException(
+                //Some Oracle JVM return Objects with more fields than the overridden/official type (Example ThreadInfo)
+                //in that case skip additional fields
+                if(isFuzzy()) {
+                    continue;
+                } else {
+                    throw new IllegalArgumentException(
                         "Conversion to CompositeType failed because " + key + " is not known as composite attribute key.");
+                }
             }
             if (value != null) {
                 Object convertedValue = getDispatcher().deserialize(pType.getType(key), value);
                 pCompositeValues.put(key, convertedValue);
             }
         }
+    }
+
+    private boolean isFuzzy() {
+        return fuzzy;
     }
 
     private void completeCompositeValuesWithDefaults(CompositeType pType, Map<String, Object> pCompositeValues) {
